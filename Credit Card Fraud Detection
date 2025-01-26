@@ -1,0 +1,101 @@
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+from imblearn.over_sampling import SMOTE
+from sklearn.metrics import accuracy_score
+
+# Load dataset
+print("Loading training and testing datasets...")
+df = pd.read_csv(r"C:\Users\HP\Downloads\archive (4)\fraudTrain.csv")
+dc = pd.read_csv(r"C:\Users\HP\Downloads\archive (4)\fraudTest.csv")
+
+# Drop unnecessary columns
+print("Dropping unnecessary columns from training and testing data...")
+drop_cols = ['Unnamed: 0', 'trans_date_trans_time', 'cc_num', 'merchant', 
+             'first', 'last', 'street', 'city', 'zip', 'lat', 'long', 'dob', 
+             'trans_num', 'unix_time', 'merch_lat', 'merch_long']
+df.drop(columns=drop_cols, inplace=True)
+dc.drop(columns=drop_cols, inplace=True)
+
+# Preprocessing function
+print("Preprocessing data with one-hot encoding and gender mapping...")
+def preprocess_data(data):
+    data['gender'] = data['gender'].apply(lambda x: 1 if x == 'M' else 0)
+    data.fillna(0, inplace=True)  # Fill NaN values
+    data = pd.get_dummies(data, columns=['job'], prefix=['job'])  # One-hot encoding
+    for col in data.select_dtypes(include=['object']).columns:
+        data = pd.get_dummies(data, columns=[col], prefix=[col])  
+    return data
+
+# Apply preprocessing
+print("Applying preprocessing to both training and testing data...")
+df = preprocess_data(df)
+dc = preprocess_data(dc)
+
+# Align columns between df and dc
+print("Aligning columns between training and testing data...")
+dc = dc.reindex(columns=df.columns, fill_value=0)  # Ensure 'dc' has the same columns as 'df'
+
+# Define features & target
+X = df.drop('is_fraud', axis=1)
+y = df['is_fraud']
+
+# Train-test split
+print("Splitting data into training and testing sets...")
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+# Apply SMOTE BEFORE scaling
+print("Applying SMOTE to handle class imbalance in the training data...")
+smote = SMOTE(sampling_strategy=0.5, random_state=42)
+X_train_resampled, y_train_resampled = smote.fit_resample(X_train, y_train)
+
+# Standardize the data
+print("Scaling the features...")
+scaler = StandardScaler()
+X_train_resampled = scaler.fit_transform(X_train_resampled)
+X_test = scaler.transform(X_test)  # Apply same scaling to test set
+
+# Final Model Training
+print("Training the Random Forest classifier...")
+rf_classifier = RandomForestClassifier(
+    n_estimators=300,
+    max_depth=15,
+    min_samples_split=10,
+    min_samples_leaf=5,
+    class_weight="balanced_subsample",
+    max_features="sqrt",
+    n_jobs=-1,
+    random_state=42
+)
+rf_classifier.fit(X_train_resampled, y_train_resampled)
+
+# Apply the model to the test dataset 'dc'
+print("Applying the trained model to the test dataset 'dc' for prediction...")
+X_dc = dc.drop('is_fraud', axis=1, errors='ignore')  # Drop the target column (if present) for prediction
+X_dc_scaled = scaler.transform(X_dc)  # Scale the test dataset (same as training data)
+
+# Predict on the test dataset
+print("Predicting fraud labels for the test dataset...")
+dc_predictions = rf_classifier.predict(X_dc_scaled)
+
+# Add predictions to the 'dc' dataframe
+dc['predicted_is_fraud'] = dc_predictions
+
+# Calculate accuracy on 'dc' dataset (if 'is_fraud' exists in the test set)
+print("Calculating accuracy on the test dataset...")
+if 'is_fraud' in dc.columns:
+    accuracy = accuracy_score(dc['is_fraud'], dc['predicted_is_fraud'])
+    print(f"Accuracy on test dataset: {accuracy:.4f}")
+else:
+    print("Accuracy cannot be calculated as 'is_fraud' column is missing in the test dataset.")
+
+# Save results to a CSV file (optional)
+print("Saving the results to fraud_predictions.csv...")
+dc.to_csv(r'C:\Users\HP\Downloads\fraud_predictions.csv', index=False)
+
+# Show the predictions
+print("Displaying the first few predictions...")
+print(dc[['predicted_is_fraud']].head(1900))  # Display first few predictions
+
+
